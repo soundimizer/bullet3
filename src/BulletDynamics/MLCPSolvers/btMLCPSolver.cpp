@@ -238,6 +238,27 @@ void btMLCPSolver::createMLCPFast(const btContactSolverInfo& infoGlobal)
 
 		for (int i = 0; i < m_allConstraintPtrArray.size(); i += numRows, c++)
 		{
+			// IDS PATCH (2026-09-14): m_tmpConstraintSizesPool has one entry per
+			// ORIGINAL non-contact constraint (including ones that contributed
+			// zero rows - see btSequentialImpulseConstraintSolver::
+			// solveGroupCacheFriendlySetup, which skips pushing solver rows for
+			// info1.m_numConstraintRows==0 but still allocates a
+			// m_tmpConstraintSizesPool entry for every constraint). Upstream
+			// assumed `c` (incremented once per row-group actually present in
+			// m_allConstraintPtrArray) stays equal to that constraint index; a
+			// single zero-row constraint (e.g. a fully free/unmotored axis on a
+			// btGeneric6DofConstraint) desynchronizes the two counters for
+			// everything after it, eventually driving `c`/`ofs` out of bounds
+			// (confirmed via AddressSanitizer: heap-buffer-overflow writing
+			// ofs[c]). Resync by skipping the same zero-row constraints here.
+			while (i < m_tmpSolverNonContactConstraintPool.size() && c < m_tmpConstraintSizesPool.size() && m_tmpConstraintSizesPool[c].m_numConstraintRows == 0)
+			{
+				c++;
+			}
+			if (c >= ofs.size() || (i < m_tmpSolverNonContactConstraintPool.size() && c >= m_tmpConstraintSizesPool.size()))
+			{
+				break;
+			}
 			ofs[c] = rowOffset;
 			int sbA = m_allConstraintPtrArray[i]->m_solverBodyIdA;
 			int sbB = m_allConstraintPtrArray[i]->m_solverBodyIdB;
@@ -341,6 +362,18 @@ void btMLCPSolver::createMLCPFast(const btContactSolverInfo& infoGlobal)
 		BT_PROFILE("Compute A");
 		for (int i = 0; i < m_allConstraintPtrArray.size(); i += numRows, c++)
 		{
+			// IDS PATCH (2026-09-14): same c/m_tmpConstraintSizesPool resync as
+			// the "Compute J and JinvM" loop above - must stay in lockstep with
+			// it, since jointNodeArray[...].jointIndex values recorded there are
+			// compared against this loop's `c` below (see `j0 < c` / `j1 < c`).
+			while (i < m_tmpSolverNonContactConstraintPool.size() && c < m_tmpConstraintSizesPool.size() && m_tmpConstraintSizesPool[c].m_numConstraintRows == 0)
+			{
+				c++;
+			}
+			if (c >= ofs.size() || (i < m_tmpSolverNonContactConstraintPool.size() && c >= m_tmpConstraintSizesPool.size()))
+			{
+				break;
+			}
 			int row__ = ofs[c];
 			int sbA = m_allConstraintPtrArray[i]->m_solverBodyIdA;
 			int sbB = m_allConstraintPtrArray[i]->m_solverBodyIdB;
@@ -398,6 +431,16 @@ void btMLCPSolver::createMLCPFast(const btContactSolverInfo& infoGlobal)
 			int jj = 0;
 			for (; row__ < numJointRows;)
 			{
+				// IDS PATCH (2026-09-14): same c/m_tmpConstraintSizesPool resync as
+				// the loops above, keyed on row__/jj instead of i/c.
+				while (row__ < m_tmpSolverNonContactConstraintPool.size() && jj < m_tmpConstraintSizesPool.size() && m_tmpConstraintSizesPool[jj].m_numConstraintRows == 0)
+				{
+					jj++;
+				}
+				if (row__ < m_tmpSolverNonContactConstraintPool.size() && jj >= m_tmpConstraintSizesPool.size())
+				{
+					break;
+				}
 				//int sbA = m_allConstraintPtrArray[row__]->m_solverBodyIdA;
 				int sbB = m_allConstraintPtrArray[row__]->m_solverBodyIdB;
 				//	btRigidBody* orgBodyA = m_tmpSolverBodyPool[sbA].m_originalBody;
